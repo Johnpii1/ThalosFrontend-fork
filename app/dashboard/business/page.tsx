@@ -16,7 +16,7 @@ import { WalletGuard, WalletPrompt } from "@/components/shared/wallet-guard"
 import { useAuthStore } from "@/lib/auth-store"
 import { WalletAddress } from "@/components/ui/wallet-address"
 import { getProfileByWallet, type Profile } from "@/lib/actions/profile"
-import { getKybStatus, startKybSession, type KybSession, type KybStatus } from "@/lib/api/kyb"
+import { getKybStatus, startKybSession, type CreateKybSessionInput, type KybSession, type KybStatus } from "@/lib/api/kyb"
 import {
   getBusinessMembers,
   addBusinessMember,
@@ -114,7 +114,13 @@ const connectedWallets = [
 ]
 
 const wizardStepKeys = ["wizard.escrowType", "wizard.useCase", "wizard.agreementInfo", "wizard.paymentWallets", "wizard.reviewSend"]
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
+interface KybCompanyProfile extends Profile {
+  registration_number?: string | null
+  country?: string | null
+  entity_type?: string | null
+}
 interface Milestone { description: string; amount: string; status: "pending" | "approved" | "released"; released?: boolean; approved?: boolean }
 interface Agreement {
   id: string
@@ -253,7 +259,7 @@ export default function BusinessDashboardPage() {
   const [activeSection, setActiveSection] = useState("agreements")
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showProfileEditor, setShowProfileEditor] = useState(false)
-  const [companyProfile, setCompanyProfile] = useState<Profile | null>(null)
+  const [companyProfile, setCompanyProfile] = useState<KybCompanyProfile | null>(null)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   
   // Workspace and RBAC State
@@ -352,6 +358,32 @@ export default function BusinessDashboardPage() {
   
   const currentWorkspaceWallet = activeBusinessWallet || walletAddress;
   const isKybVerified = kybStatus === "verified"
+  const companyOrganizationId = companyProfile?.id && UUID_PATTERN.test(companyProfile.id) ? companyProfile.id : null
+
+  const buildKybSessionInput = useCallback((): CreateKybSessionInput | null => {
+    if (!companyOrganizationId) {
+      setKybError("Your business profile is missing a valid organization UUID. Please refresh your profile before starting KYB.")
+      return null
+    }
+
+    const businessName = companyProfile?.display_name?.trim()
+    const registrationNumber = companyProfile?.registration_number?.trim()
+    const country = companyProfile?.country?.trim().toUpperCase()
+    const entityType = companyProfile?.entity_type?.trim() || "company"
+
+    if (!businessName || !registrationNumber || !country || !/^[A-Z]{2}$/.test(country)) {
+      setKybError("Complete business name, registration number, and ISO-2 country in your profile before starting KYB.")
+      return null
+    }
+
+    return {
+      organization_id: companyOrganizationId,
+      business_name: businessName,
+      registration_number: registrationNumber,
+      country,
+      entity_type: entityType,
+    }
+  }, [companyOrganizationId, companyProfile])
 
   const refreshKybStatus = useCallback(async (organizationId = kybOrganizationId) => {
     if (!organizationId) return
@@ -371,20 +403,23 @@ export default function BusinessDashboardPage() {
     setKybLoading(true)
     setKybError(null)
     setKybSessionExpired(false)
-    const result = await startKybSession(token ?? undefined)
+    const input = buildKybSessionInput()
+    if (!input) {
+      setKybLoading(false)
+      return
+    }
+
+    const result = await startKybSession(input, token ?? undefined)
     if (result.success && result.data) {
       setKybSession(result.data)
       setKybStatus(result.data.status === "pending" ? "in_review" : result.data.status)
-      const orgId = result.data.organizationId || activeBusinessWallet || walletAddress || null
-      setKybOrganizationId(orgId)
-      const flowUrl = result.data.redirectUrl || result.data.verificationUrl || result.data.embeddedUrl
-      if (flowUrl) window.location.assign(flowUrl)
-      if (orgId) void refreshKybStatus(orgId)
+      setKybOrganizationId(result.data.organizationId)
+      if (result.data.organizationId) void refreshKybStatus(result.data.organizationId)
     } else {
       setKybError(result.error || "Unable to start verification")
     }
     setKybLoading(false)
-  }, [activeBusinessWallet, refreshKybStatus, token, walletAddress])
+  }, [buildKybSessionInput, refreshKybStatus, token])
 
   // Helper to map escrow to agreement format
   const mapEscrowToAgreement = (e: any): Agreement => {
@@ -499,10 +534,10 @@ export default function BusinessDashboardPage() {
   }, [activeSection, activeBusinessWallet, activePermissions.team]);
 
   useEffect(() => {
-    if (!activeBusinessWallet) return
-    setKybOrganizationId(activeBusinessWallet)
-    void refreshKybStatus(activeBusinessWallet)
-  }, [activeBusinessWallet, refreshKybStatus])
+    if (!companyOrganizationId) return
+    setKybOrganizationId(companyOrganizationId)
+    void refreshKybStatus(companyOrganizationId)
+  }, [companyOrganizationId, refreshKybStatus])
 
   useEffect(() => {
     if (!kybOrganizationId || kybStatus === "verified" || kybStatus === "rejected") return
@@ -996,8 +1031,8 @@ export default function BusinessDashboardPage() {
                 </div>
                 <div className="grid gap-2 text-sm text-white/50 sm:grid-cols-3">
                   <p><span className="block text-[10px] uppercase tracking-widest text-white/25">Business name</span>{companyProfile?.display_name || "Not provided"}</p>
-                  <p><span className="block text-[10px] uppercase tracking-widest text-white/25">Registration number</span>{(companyProfile as Profile & { registration_number?: string | null })?.registration_number || "Not provided"}</p>
-                  <p><span className="block text-[10px] uppercase tracking-widest text-white/25">Country</span>{(companyProfile as Profile & { country?: string | null })?.country || "Not provided"}</p>
+                  <p><span className="block text-[10px] uppercase tracking-widest text-white/25">Registration number</span>{companyProfile?.registration_number || "Not provided"}</p>
+                  <p><span className="block text-[10px] uppercase tracking-widest text-white/25">Country</span>{companyProfile?.country || "Not provided"}</p>
                 </div>
                 {!isKybVerified && <p className="mt-3 text-sm text-amber-200/80">Verification is required before creating enterprise agreements or depositing funds.</p>}
                 {kybSessionExpired && <p className="mt-2 text-sm text-red-300">Your verification session expired. Start a new session to continue.</p>}
