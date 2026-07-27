@@ -15,7 +15,7 @@ import { useCurrentAddress, useWalletType } from "@/lib/use-current-address"
 import { WalletGuard, WalletPrompt } from "@/components/shared/wallet-guard"
 import { useAuthStore } from "@/lib/auth-store"
 import { WalletAddress } from "@/components/ui/wallet-address"
-import { getProfileByWallet, type Profile } from "@/lib/actions/profile"
+import { getProfileByWallet, updateProfile, type Profile } from "@/lib/actions/profile"
 import {
   getBusinessMembers,
   addBusinessMember,
@@ -35,6 +35,8 @@ import {
 } from "recharts"
 import { createAgreement, sendTransaction, AgreementPayload, approveMilestone } from "@/services/trustlessworkService"
 import { STELLAR_EXPLORER_BASE_URL, SHOW_MOCKED_AGREEMENTS } from "@/lib/config"
+import { startKybSession } from "@/lib/api/kyb"
+import { KYB_ENTITY_TYPES, canStartKybSession, isKybVerified, nextKybStatusAfterSessionStart, type KybEntityType } from "@/lib/kyb"
 import {
   createTemplate,
   updateTemplate,
@@ -173,6 +175,7 @@ const sidebarItems = [
   { id: "templates", labelKey: "dashPage.templates", icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg> },
   { id: "wallets", labelKey: "dashPage.wallets", icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/></svg> },
   { id: "analytics", labelKey: "dashPage.analytics", icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg> },
+  { id: "verification", labelKey: "dashPage.verification", icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg> },
   { id: "team", labelKey: "dashPage.team", icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
 ]
 
@@ -262,6 +265,7 @@ export default function BusinessDashboardPage() {
   const [isCheckingRole, setIsCheckingRole] = useState(true)
   const [teamMembers, setTeamMembers] = useState<BusinessMember[]>([])
   const [loadingTeam, setLoadingTeam] = useState(false)
+  const currentWorkspaceWallet = activeBusinessWallet || walletAddress
 
   // Derive permissions helper
   const activePermissions = useMemo(() => {
@@ -318,6 +322,12 @@ export default function BusinessDashboardPage() {
                 account_type: "enterprise",
                 role: "user",
                 created_at: "",
+                business_name: null,
+                registration_number: null,
+                country: null,
+                entity_type: null,
+                kyb_status: "not_started",
+                kyb_session_id: null,
                 updated_at: ""
               })
             }
@@ -335,6 +345,66 @@ export default function BusinessDashboardPage() {
     }
     resolveRoleAndProfile()
   }, [walletAddress])
+
+  const [businessName, setBusinessName] = useState("")
+  const [registrationNumber, setRegistrationNumber] = useState("")
+  const [country, setCountry] = useState("")
+  const [entityType, setEntityType] = useState<KybEntityType | "">("")
+  const [kybSubmitting, setKybSubmitting] = useState(false)
+  const [kybError, setKybError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setBusinessName(companyProfile?.business_name ?? companyProfile?.display_name ?? "")
+    setRegistrationNumber(companyProfile?.registration_number ?? "")
+    setCountry(companyProfile?.country ?? "")
+    setEntityType(companyProfile?.entity_type ?? "")
+  }, [companyProfile])
+
+  const kybFields = {
+    business_name: businessName,
+    registration_number: registrationNumber,
+    country,
+    entity_type: entityType || null,
+    kyb_status: companyProfile?.kyb_status ?? "not_started",
+    kyb_session_id: companyProfile?.kyb_session_id ?? null,
+  }
+  const canContinueKyb = Boolean(currentWorkspaceWallet && canStartKybSession(kybFields) && !isKybVerified(companyProfile?.kyb_status))
+  const kybVerified = isKybVerified(companyProfile?.kyb_status)
+  const gatedSectionIds = new Set(["create", "templates", "wallets", "analytics", "team"])
+  const isActiveSectionKybGated = gatedSectionIds.has(activeSection) && !kybVerified
+
+  const handleStartKybSession = async () => {
+    if (!currentWorkspaceWallet || !canContinueKyb) return
+    setKybSubmitting(true)
+    setKybError(null)
+    try {
+      const saved = await updateProfile(currentWorkspaceWallet, {
+        business_name: businessName.trim(),
+        registration_number: registrationNumber.trim(),
+        country: country.trim(),
+        entity_type: entityType || null,
+      })
+      if (saved.error) throw new Error(saved.error)
+
+      const session = await startKybSession(currentWorkspaceWallet, kybFields, token)
+      const sessionId = session.session_id ?? session.id ?? null
+      const nextStatus = nextKybStatusAfterSessionStart()
+      const statusUpdate = await updateProfile(currentWorkspaceWallet, {
+        kyb_status: nextStatus,
+        kyb_session_id: sessionId,
+      })
+      if (statusUpdate.error) throw new Error(statusUpdate.error)
+      setCompanyProfile(statusUpdate.profile ?? saved.profile)
+      toast.success("KYB session submitted for review")
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to start KYB session"
+      setKybError(message)
+      toast.error(message)
+    } finally {
+      setKybSubmitting(false)
+    }
+  }
+
   const [agreements, setAgreements] = useState<Agreement[]>(initialAgreements)
   const [viewingAgreement, setViewingAgreement] = useState<string | null>(null)
   const [showAgreementChat, setShowAgreementChat] = useState<string | null>(null)
@@ -342,8 +412,7 @@ export default function BusinessDashboardPage() {
   const [showDisputeConfirm, setShowDisputeConfirm] = useState<{ agrId: string; msIdx: number } | null>(null)
   const [approverEscrows, setApproverEscrows] = useState<Agreement[]>([])
   const [approverLoading, setApproverLoading] = useState(false)
-  
-  const currentWorkspaceWallet = activeBusinessWallet || walletAddress;
+
 
   // Helper to map escrow to agreement format
   const mapEscrowToAgreement = (e: any): Agreement => {
@@ -389,7 +458,9 @@ export default function BusinessDashboardPage() {
       const allAgreements: Agreement[] = [];
       
       // Fetch escrows by signer
-      const signerRes = await getEscrowsBySigner(currentWorkspaceWallet, token);
+      const workspaceWallet = currentWorkspaceWallet;
+      if (!workspaceWallet) return;
+      const signerRes = await getEscrowsBySigner(workspaceWallet, token);
       if (signerRes.success && Array.isArray(signerRes.data)) {
         signerRes.data.forEach((escrow: any) => {
           if (!seenIds.has(escrow.contractId)) {
@@ -402,7 +473,7 @@ export default function BusinessDashboardPage() {
       // Fetch by each role
       const roles = ["receiver", "service_provider", "approver"] as const;
       for (const role of roles) {
-        const res = await getEscrowsByRole({ role, address: currentWorkspaceWallet }, token);
+        const res = await getEscrowsByRole({ role, address: workspaceWallet }, token);
         if (res.success && Array.isArray(res.data)) {
           res.data.forEach((escrow: any) => {
             if (!seenIds.has(escrow.contractId)) {
@@ -428,7 +499,9 @@ export default function BusinessDashboardPage() {
       setApproverLoading(true);
       try {
         const { getEscrowsByRole } = await import("@/services/escrowMigration");
-        const res = await getEscrowsByRole({ role: "approver", address: currentWorkspaceWallet }, token);
+        const workspaceWallet = currentWorkspaceWallet;
+        if (!workspaceWallet) return;
+        const res = await getEscrowsByRole({ role: "approver", address: workspaceWallet }, token);
         if (res.success && Array.isArray(res.data)) {
           setApproverEscrows(res.data.map((e: any) => mapEscrowToAgreement(e)));
         }
@@ -444,7 +517,7 @@ export default function BusinessDashboardPage() {
   // Fetch team members when activeSection is 'team'
   useEffect(() => {
     async function fetchTeam() {
-      if (activeSection === "team" && activeBusinessWallet && activePermissions.team) {
+      if (activeSection === "team" && !isActiveSectionKybGated && activeBusinessWallet && activePermissions.team) {
         setLoadingTeam(true);
         const { getBusinessMembers } = await import("@/lib/actions/business-roles");
         const res = await getBusinessMembers(activeBusinessWallet);
@@ -841,6 +914,7 @@ export default function BusinessDashboardPage() {
                       if (item.id === "wallets") return activePermissions.wallets;
                       if (item.id === "analytics") return activePermissions.analytics;
                       if (item.id === "team") return activePermissions.team;
+                      if (item.id === "verification") return memberRole === "Admin";
                       return true;
                     })
                     .map((item) => {
@@ -863,7 +937,7 @@ export default function BusinessDashboardPage() {
                       {item.icon}
                     </span>
                     <span className="relative z-10">
-                      {t(`dashPage.${item.id === "create" ? "newAgreement" : item.id === "templates" ? "templates" : item.id}`)}
+                      {item.id === "verification" ? "Verification" : t(`dashPage.${item.id === "create" ? "newAgreement" : item.id === "templates" ? "templates" : item.id}`)}
                     </span>
                     {isActive && (
                       <div className="ml-auto relative z-10">
@@ -930,8 +1004,43 @@ export default function BusinessDashboardPage() {
         <main className="flex-1 overflow-y-auto p-4 lg:p-8">
           
 
+          {/* ══════ KYB VERIFICATION ══════ */}
+          {(activeSection === "verification" || isActiveSectionKybGated) && (
+            <div className="mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="mb-6 rounded-2xl border border-white/10 bg-[#0c1220] p-6">
+                <p className="text-xs font-bold uppercase tracking-widest text-[#3b82f6]">Business verification</p>
+                <h1 className="mt-2 text-2xl font-semibold text-white">KYB required</h1>
+                <p className="mt-2 text-sm text-white/50">Start a KYB session before using gated enterprise pages. The flow is start → in_review → verified; agreement creation, templates, wallets, analytics, and team management stay blocked until verified.</p>
+                <div className="mt-4 flex gap-2 text-xs">
+                  {["start", "in_review", "verified"].map((s) => (
+                    <span key={s} className={cn("rounded-full border px-3 py-1", companyProfile?.kyb_status === s || (s === "start" && companyProfile?.kyb_status === "not_started") ? "border-[#3b82f6]/30 bg-[#3b82f6]/10 text-[#3b82f6]" : "border-white/10 text-white/40")}>{s}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-4 rounded-2xl border border-white/10 bg-[#0c1220] p-6">
+                <FormInput label="Business name" value={businessName} onChange={setBusinessName} placeholder="Acme Inc." required />
+                <FormInput label="Registration number" value={registrationNumber} onChange={setRegistrationNumber} placeholder="EIN, company number, or local registry ID" required />
+                <FormInput label="Country" value={country} onChange={setCountry} placeholder="United States" required />
+                <FormSelect
+                  label="Entity type"
+                  value={entityType}
+                  onChange={(value) => setEntityType(value as KybEntityType | "")}
+                  required
+                  options={[{ value: "", label: "Select entity type" }, ...KYB_ENTITY_TYPES.map((value) => ({ value, label: value.replace("_", " ") }))]}
+                />
+                {kybError && <p className="text-sm text-red-400">{kybError}</p>}
+                {companyProfile?.kyb_status === "in_review" && <p className="text-sm text-[#f0b400]">Your KYB session is in review. Gated pages remain blocked until the backend marks the business verified.</p>}
+                {kybVerified && <p className="text-sm text-emerald-400">Business verified. Gated enterprise pages are enabled.</p>}
+                <Button onClick={handleStartKybSession} disabled={!canContinueKyb || kybSubmitting} className="w-fit rounded-full bg-[#3b82f6] px-6 text-white hover:bg-[#2563eb] disabled:opacity-50">
+                  {kybSubmitting ? "Submitting..." : "Continue"}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* ══════ ANALYTICS ══════ */}
-          {activeSection === "analytics" && activePermissions.analytics && (
+          {activeSection === "analytics" && !isActiveSectionKybGated && activePermissions.analytics && (
             <div className="mx-auto max-w-5xl animate-in fade-in slide-in-from-bottom-2 duration-300">
               <h1 className="mb-6 text-2xl font-semibold text-white">{t("dashPage.enterprise")} {t("dashPage.analytics")}</h1>
 
@@ -1018,7 +1127,7 @@ export default function BusinessDashboardPage() {
           )}
 
           {/* ══════ AGREEMENTS ══════ */}
-          {activeSection === "agreements" && !viewingAgreement && (
+          {activeSection === "agreements" && !isActiveSectionKybGated && !viewingAgreement && (
             <div className="mx-auto max-w-4xl animate-in fade-in slide-in-from-bottom-2 duration-300">
               {/* Header */}
               <div className="mb-6 flex items-center justify-between">
@@ -1065,7 +1174,7 @@ export default function BusinessDashboardPage() {
           )}
 
           {/* ══════ AGREEMENT DETAIL ══════ */}
-          {activeSection === "agreements" && viewingAgreement && (() => {
+          {activeSection === "agreements" && !isActiveSectionKybGated && viewingAgreement && (() => {
             const agr = agreements.find(a => a.id === viewingAgreement)
             if (!agr) return null
             const allReleased = agr.milestones.every(m => m.status === "released")
@@ -1281,7 +1390,7 @@ export default function BusinessDashboardPage() {
           )}
 
           {/* ══════ TEMPLATES ══════ */}
-          {activeSection === "templates" && activePermissions.templates && (
+          {activeSection === "templates" && !isActiveSectionKybGated && activePermissions.templates && (
             <div className="mx-auto max-w-4xl animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className="mb-2 flex items-center justify-between">
                 <div>
@@ -1409,7 +1518,7 @@ export default function BusinessDashboardPage() {
           )}
 
           {/* ══════ WALLETS ══════ */}
-          {activeSection === "wallets" && activePermissions.wallets && (
+          {activeSection === "wallets" && !isActiveSectionKybGated && activePermissions.wallets && (
             <div className="mx-auto max-w-4xl animate-in fade-in slide-in-from-bottom-2 duration-300">
               <h1 className="mb-6 text-2xl font-semibold text-white">Enterprise Wallets</h1>
               <div className="flex flex-col gap-4">
@@ -1466,7 +1575,7 @@ export default function BusinessDashboardPage() {
           )}
 
           {/* ══════ CREATE AGREEMENT ══════ */}
-          {activeSection === "create" && activePermissions.create && (
+          {activeSection === "create" && !isActiveSectionKybGated && activePermissions.create && (
             <div className="mx-auto max-w-4xl animate-in fade-in slide-in-from-bottom-2 duration-300">
               {!isExternalWallet && !submitted ? (
                 <div className="pt-8">
@@ -1670,6 +1779,7 @@ export default function BusinessDashboardPage() {
       date: new Date().toISOString().split("T")[0],
       milestones: milestones.map(m => ({ description: m.description, amount: m.amount, status: "pending" as const })),
       receiver: selectedWallet,
+      currency: "USDC",
     }
     setAgreements(prev => [newAgr, ...prev])
     setSubmitted(true)
@@ -1683,7 +1793,7 @@ export default function BusinessDashboardPage() {
             </div>
           )}
           {/* ══════ TEAM MANAGEMENT ══════ */}
-          {activeSection === "team" && activePermissions.team && (
+          {activeSection === "team" && !isActiveSectionKybGated && activePermissions.team && (
             <div className="mx-auto max-w-4xl animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className="mb-6">
                 <h1 className="text-2xl font-semibold text-white">Team Management</h1>
