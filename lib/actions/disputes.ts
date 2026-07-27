@@ -54,9 +54,12 @@ export interface ResolveDisputeInput {
 
 /**
  * Open a new dispute on an agreement
+ * @param input Open dispute input
+ * @param token JWT token for updating agreement status
  */
 export async function openDispute(
-  input: OpenDisputeInput
+  input: OpenDisputeInput,
+  token?: string
 ): Promise<{ dispute: Dispute | null; error: string | null }> {
   try {
     const supabase = await createClient()
@@ -91,13 +94,17 @@ export async function openDispute(
     }
 
     // Update agreement status to disputed
-    await updateAgreementStatus(input.agreement_id, "disputed", input.opened_by)
+    if (token) {
+      await updateAgreementStatus(input.agreement_id, "disputed", input.opened_by, token)
+    }
 
     // Log activity
-    await logAgreementActivity(input.agreement_id, input.opened_by, "dispute_opened", {
-      dispute_id: dispute.id,
-      reason: input.reason,
-    })
+    if (token) {
+      await logAgreementActivity(input.agreement_id, input.opened_by, "dispute_opened", {
+        dispute_id: dispute.id,
+        reason: input.reason,
+      }, token)
+    }
 
     return { dispute: dispute as Dispute, error: null }
   } catch (e) {
@@ -108,10 +115,14 @@ export async function openDispute(
 
 /**
  * Assign a resolver to a dispute
+ * @param disputeId Dispute ID
+ * @param resolverWallet Resolver wallet address
+ * @param token JWT token for logging agreement activity
  */
 export async function assignDisputeResolver(
   disputeId: string,
-  resolverWallet: string
+  resolverWallet: string,
+  token?: string
 ): Promise<{ success: boolean; error: string | null }> {
   try {
     const supabase = await createClient()
@@ -143,10 +154,12 @@ export async function assignDisputeResolver(
       return { success: false, error: error.message }
     }
 
-    await logAgreementActivity(dispute.agreement_id, resolverWallet, "dispute_resolver_assigned", {
-      dispute_id: disputeId,
-      resolver_wallet: resolverWallet,
-    })
+    if (token) {
+      await logAgreementActivity(dispute.agreement_id, resolverWallet, "dispute_resolver_assigned", {
+        dispute_id: disputeId,
+        resolver_wallet: resolverWallet,
+      }, token)
+    }
 
     return { success: true, error: null }
   } catch (e) {
@@ -157,9 +170,12 @@ export async function assignDisputeResolver(
 
 /**
  * Resolve a dispute with fund distribution percentages
+ * @param input Resolve dispute input
+ * @param token JWT token for updating agreement status
  */
 export async function resolveDispute(
-  input: ResolveDisputeInput
+  input: ResolveDisputeInput,
+  token?: string
 ): Promise<{ resolution: DisputeResolution | null; error: string | null }> {
   try {
     const supabase = await createClient()
@@ -221,15 +237,19 @@ export async function resolveDispute(
     }
 
     // Update agreement status to resolved
-    await updateAgreementStatus(dispute.agreement_id, "resolved", input.resolved_by)
+    if (token) {
+      await updateAgreementStatus(dispute.agreement_id, "resolved", input.resolved_by, token)
+    }
 
     // Log activity
-    await logAgreementActivity(dispute.agreement_id, input.resolved_by, "dispute_resolved", {
-      dispute_id: input.dispute_id,
-      payer_percentage: input.payer_percentage,
-      payee_percentage: input.payee_percentage,
-      resolution_notes: input.resolution_notes,
-    })
+    if (token) {
+      await logAgreementActivity(dispute.agreement_id, input.resolved_by, "dispute_resolved", {
+        dispute_id: input.dispute_id,
+        payer_percentage: input.payer_percentage,
+        payee_percentage: input.payee_percentage,
+        resolution_notes: input.resolution_notes,
+      }, token)
+    }
 
     return { resolution: resolution as DisputeResolution, error: null }
   } catch (e) {
@@ -240,10 +260,14 @@ export async function resolveDispute(
 
 /**
  * Cancel a dispute (by the opener)
+ * @param disputeId Dispute ID
+ * @param cancelledBy Wallet address of person cancelling
+ * @param token JWT token for updating agreement status
  */
 export async function cancelDispute(
   disputeId: string,
-  cancelledBy: string
+  cancelledBy: string,
+  token?: string
 ): Promise<{ success: boolean; error: string | null }> {
   try {
     const supabase = await createClient()
@@ -279,11 +303,15 @@ export async function cancelDispute(
     }
 
     // Revert agreement status to active
-    await updateAgreementStatus(dispute.agreement_id, "active", cancelledBy)
+    if (token) {
+      await updateAgreementStatus(dispute.agreement_id, "active", cancelledBy, token)
+    }
 
-    await logAgreementActivity(dispute.agreement_id, cancelledBy, "dispute_cancelled", {
-      dispute_id: disputeId,
-    })
+    if (token) {
+      await logAgreementActivity(dispute.agreement_id, cancelledBy, "dispute_cancelled", {
+        dispute_id: disputeId,
+      }, token)
+    }
 
     return { success: true, error: null }
   } catch (e) {
