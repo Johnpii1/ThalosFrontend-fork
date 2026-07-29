@@ -22,6 +22,7 @@ import {
   getAgreementByContractIdApi,
   linkContractToAgreementApi,
   getAgreementsByWallet as getAgreementsByWalletApi,
+  getAgreementByIdWithParticipants,
   type Agreement,
   type AgreementStatus,
   type AgreementMilestone,
@@ -179,19 +180,15 @@ export async function getAgreementById(
   token?: string
 ): Promise<{ agreement: Agreement | null; participants: AgreementParticipant[]; error: string | null }> {
   try {
-    const result = await getAgreementApi(agreementId, token)
-    if (!result.success || !result.data) {
+    const result = await getAgreementByIdWithParticipants(agreementId, token)
+    if (!result.success) {
       return { agreement: null, participants: [], error: result.error || "Agreement not found" }
     }
 
-    // Participants are included in the agreement response from the backend
-    // For now, extract them from metadata or return empty list
-    // The backend should return participants in the agreement response
-    const participants: AgreementParticipant[] = []
-
+    const data = result.data || { agreement: null, participants: [] }
     return {
-      agreement: result.data,
-      participants,
+      agreement: data.agreement,
+      participants: data.participants,
       error: null,
     }
   } catch (e) {
