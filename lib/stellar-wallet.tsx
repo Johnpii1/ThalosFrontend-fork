@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { getKit, clearKit, isFreighterAvailable } from "@/lib/stellar-wallet-kit"
 import { signTransaction as unifiedSign, signMessage as unifiedSignMessage } from "@/lib/signing"
 import { getOrCreateProfile, type Profile } from "@/lib/actions/profile"
-import { STELLAR_NETWORK_PASSPHRASE, SHOW_SIGN_MESSAGE_TEST } from "@/lib/config"
+import { SHOW_SIGN_MESSAGE_TEST } from "@/lib/config"
 import { useAuthStore } from "@/lib/auth-store"
 import { requestWalletChallenge, verifyWalletLogin } from "@/lib/api/wallet-auth"
 import { linkWallet } from "@/lib/api/wallets"
@@ -110,10 +110,9 @@ export function StellarWalletProvider({ children }: { children: React.ReactNode 
               if (SHOW_SIGN_MESSAGE_TEST) {
                 try {
                   const { challenge } = await requestWalletChallenge(addr);
-                  const signed = await kit.signMessage(challenge, {
-                    networkPassphrase: STELLAR_NETWORK_PASSPHRASE,
-                    address: addr,
-                  });
+                  // Route through the unified signer (sessionStorage already
+                  // holds the address, so dispatch resolves to the Kit provider).
+                  const signed = await unifiedSignMessage(challenge, addr);
                   if (!signed?.signedMessage) {
                     throw new Error("La wallet no devolvió una firma");
                   }
