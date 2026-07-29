@@ -1,5 +1,5 @@
-<<<<<<< HEAD
 import { apiRequest, type ApiResponse } from "./client"
+import { type CreateKybSessionDto } from "@/lib/kyb"
 
 export type KybStatus = "pending" | "in_review" | "verified" | "rejected"
 
@@ -8,14 +8,6 @@ export interface KybBusinessDetails {
   registrationNumber?: string | null
   country?: string | null
   entityType?: string | null
-}
-
-export interface KybSessionRequest {
-  organization_id: string
-  business_name: string
-  registration_number: string
-  country: string
-  entity_type: string
 }
 
 interface BackendKybVerification {
@@ -53,8 +45,8 @@ export interface KybStatusResponse {
   business?: KybBusinessDetails
 }
 
-function unwrapVerification(data: BackendKybVerificationEnvelope | BackendKybVerification): BackendKybVerification {
-  return "verification" in data ? data.verification : data
+function unwrapVerification(data: BackendKybVerificationEnvelope): BackendKybVerification {
+  return data.verification
 }
 
 function mapVerification(verification: BackendKybVerification): KybSession {
@@ -77,30 +69,18 @@ function isExpired(expiresAt?: string | null): boolean {
   return Boolean(expiresAt && Date.parse(expiresAt) <= Date.now())
 }
 
-export function mapKybVerificationResponse(
-  data: BackendKybVerificationEnvelope | BackendKybVerification
-): KybSession {
+export function mapKybVerificationResponse(data: BackendKybVerificationEnvelope): KybSession {
   return mapVerification(unwrapVerification(data))
 }
 
-export function buildKybSessionBody(input: KybSessionRequest): KybSessionRequest {
-  return {
-    organization_id: input.organization_id,
-    business_name: input.business_name.trim(),
-    registration_number: input.registration_number.trim(),
-    country: input.country.trim().toUpperCase(),
-    entity_type: input.entity_type.trim(),
-  }
-}
-
 export async function startKybSession(
-  request: KybSessionRequest,
-  token?: string
+  request: CreateKybSessionDto,
+  token?: string | null
 ): Promise<ApiResponse<KybSession>> {
   const result = await apiRequest<BackendKybVerificationEnvelope>(
     "/kyb/session",
-    { method: "POST", body: JSON.stringify(buildKybSessionBody(request)) },
-    token
+    { method: "POST", body: JSON.stringify(request) },
+    token ?? undefined
   )
 
   if (!result.success || !result.data) return { success: false, error: result.error }
@@ -110,12 +90,12 @@ export async function startKybSession(
 
 export async function getKybStatus(
   organizationId: string,
-  token?: string
+  token?: string | null
 ): Promise<ApiResponse<KybStatusResponse>> {
   const result = await apiRequest<BackendKybVerificationEnvelope>(
     `/kyb/status/${encodeURIComponent(organizationId)}`,
     { method: "GET" },
-    token
+    token ?? undefined
   )
 
   if (!result.success || !result.data) return { success: false, error: result.error }
@@ -132,38 +112,4 @@ export async function getKybStatus(
       business: verification.business,
     },
   }
-=======
-import { API_URL } from "@/lib/config"
-import { buildCreateKybSessionDto, nextKybStatusAfterSessionStart, type CreateKybSessionDto, type KybProfileFields } from "@/lib/kyb"
-
-export type KybSessionResponse = {
-  id?: string
-  session_id?: string
-  status?: string
-  url?: string
-  redirect_url?: string
-}
-
-export async function startKybSession(
-  walletAddress: string,
-  fields: Partial<KybProfileFields>,
-  token?: string | null
-): Promise<KybSessionResponse> {
-  const dto: CreateKybSessionDto = buildCreateKybSessionDto(walletAddress, fields)
-  const response = await fetch(`${API_URL}/kyb/sessions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(dto),
-  })
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => "")
-    throw new Error(message || `Failed to start KYB session (${response.status})`)
-  }
-
-  return response.json().catch(() => ({ status: nextKybStatusAfterSessionStart() }))
->>>>>>> main
 }
