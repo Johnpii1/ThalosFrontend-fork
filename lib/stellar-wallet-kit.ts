@@ -10,8 +10,18 @@
  */
 
 import type { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk"
+import { STELLAR_NETWORK_PASSPHRASE } from "@/lib/config"
 
 let kitInstance: StellarWalletsKit | null = null
+
+/**
+ * Derive WalletNetwork from STELLAR_NETWORK_PASSPHRASE
+ */
+function walletNetworkFromEnv(): "PUBLIC" | "TESTNET" {
+  return STELLAR_NETWORK_PASSPHRASE === "Public Global Stellar Network ; September 2015"
+    ? "PUBLIC"
+    : "TESTNET"
+}
 
 /**
  * Wait for Freighter to be available in window
@@ -65,7 +75,7 @@ export async function getKit(): Promise<StellarWalletsKit | null> {
     }
     
     kitInstance = new StellarWalletsKit({
-      network: WalletNetwork.PUBLIC,
+      network: WalletNetwork[walletNetworkFromEnv()],
       modules,
     })
     
