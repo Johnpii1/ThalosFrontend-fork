@@ -118,11 +118,10 @@ export async function createAgreement(
  * Get all agreements (with optional filters)
  */
 export async function getAgreements(
-  params?: { wallet_address?: string; status?: string; type?: string },
+  params?: { status?: string; type?: string },
   token?: string
 ): Promise<ApiResponse<Agreement[]>> {
   const queryParams = new URLSearchParams()
-  if (params?.wallet_address) queryParams.set("wallet_address", params.wallet_address)
   if (params?.status) queryParams.set("status", params.status)
   if (params?.type) queryParams.set("type", params.type)
   
@@ -130,6 +129,20 @@ export async function getAgreements(
   const endpoint = query ? `/agreements?${query}` : "/agreements"
 
   return apiRequest<Agreement[]>(endpoint, { method: "GET" }, token)
+}
+
+/**
+ * Get agreements by wallet address
+ */
+export async function getAgreementsByWallet(
+  walletAddress: string,
+  token?: string
+): Promise<ApiResponse<Agreement[]>> {
+  return apiRequest<Agreement[]>(
+    `/agreements/by-wallet?wallet=${encodeURIComponent(walletAddress)}`,
+    { method: "GET" },
+    token
+  )
 }
 
 /**
@@ -152,33 +165,51 @@ export async function getAgreement(
 export async function updateAgreementStatusApi(
   agreementId: string,
   status: AgreementStatus,
-  walletAddress: string,
+  actorWallet: string,
   token: string
 ): Promise<ApiResponse<Agreement>> {
   return apiRequest<Agreement>(
     `/agreements/${agreementId}/status`,
     {
       method: "PATCH",
-      body: JSON.stringify({ status, wallet_address: walletAddress }),
+      body: JSON.stringify({ status, actor_wallet: actorWallet }),
     },
     token
   )
 }
 
 /**
- * Update agreement milestones
+ * Update agreement milestone status
+ * @param agreementId Agreement ID
+ * @param milestoneIndex Index of milestone to update
+ * @param status New status
+ * @param actorWallet Wallet of the actor making the change
+ * @param evidence Optional evidence for the milestone
+ * @param token JWT token
  */
-export async function updateAgreementMilestones(
+export async function updateMilestoneStatus(
   agreementId: string,
-  milestones: AgreementMilestone[],
-  walletAddress: string,
-  token: string
+  milestoneIndex: number,
+  status: AgreementMilestone["status"],
+  actorWallet: string,
+  evidence?: string,
+  token?: string
 ): Promise<ApiResponse<Agreement>> {
+  const body: Record<string, unknown> = {
+    milestone_index: milestoneIndex,
+    status,
+    actor_wallet: actorWallet,
+  }
+  
+  if (evidence) {
+    body.evidence = evidence
+  }
+
   return apiRequest<Agreement>(
     `/agreements/${agreementId}/milestones`,
     {
       method: "PATCH",
-      body: JSON.stringify({ milestones, wallet_address: walletAddress }),
+      body: JSON.stringify(body),
     },
     token
   )
@@ -194,26 +225,6 @@ export async function getAgreementActivityApi(
   return apiRequest<AgreementActivity[]>(
     `/agreements/${agreementId}/activity`,
     { method: "GET" },
-    token
-  )
-}
-
-/**
- * Log activity on an agreement
- */
-export async function logAgreementActivityApi(
-  agreementId: string,
-  actorWallet: string,
-  action: string,
-  details?: Record<string, unknown>,
-  token?: string
-): Promise<ApiResponse<AgreementActivity>> {
-  return apiRequest<AgreementActivity>(
-    `/agreements/${agreementId}/activity`,
-    {
-      method: "POST",
-      body: JSON.stringify({ actor_wallet: actorWallet, action, details: details || {} }),
-    },
     token
   )
 }
@@ -238,14 +249,14 @@ export async function getAgreementByContractIdApi(
 export async function linkContractToAgreementApi(
   agreementId: string,
   contractId: string,
-  walletAddress: string,
+  actorWallet: string,
   token: string
 ): Promise<ApiResponse<Agreement>> {
   return apiRequest<Agreement>(
-    `/agreements/${agreementId}/contract`,
+    `/agreements/${agreementId}/link-contract`,
     {
       method: "PATCH",
-      body: JSON.stringify({ contract_id: contractId, wallet_address: walletAddress }),
+      body: JSON.stringify({ contract_id: contractId, actor_wallet: actorWallet }),
     },
     token
   )

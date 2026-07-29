@@ -17,11 +17,11 @@ import {
   getAgreements as getAgreementsApi,
   getAgreement as getAgreementApi,
   updateAgreementStatusApi,
-  updateAgreementMilestones as updateAgreementMilestonesApi,
+  updateMilestoneStatus as updateMilestoneStatusApi,
   getAgreementActivityApi,
-  logAgreementActivityApi,
   getAgreementByContractIdApi,
   linkContractToAgreementApi,
+  getAgreementsByWallet as getAgreementsByWalletApi,
   type Agreement,
   type AgreementStatus,
   type AgreementMilestone,
@@ -129,22 +129,14 @@ export async function updateMilestoneStatus(
       return { success: false, error: "Authentication token required" }
     }
 
-    // Get current agreement to update milestones
-    const result = await getAgreementApi(agreementId, token)
-    if (!result.success || !result.data) {
-      return { success: false, error: result.error || "Agreement not found" }
-    }
-
-    const agreement = result.data
-    const milestones = [...agreement.milestones]
-    
-    if (milestoneIndex < 0 || milestoneIndex >= milestones.length) {
-      return { success: false, error: "Invalid milestone index" }
-    }
-
-    milestones[milestoneIndex].status = status
-
-    const updateResult = await updateAgreementMilestonesApi(agreementId, milestones, actorWallet, token)
+    const updateResult = await updateMilestoneStatusApi(
+      agreementId,
+      milestoneIndex,
+      status,
+      actorWallet,
+      undefined,
+      token
+    )
     if (!updateResult.success) {
       return { success: false, error: updateResult.error || "Failed to update milestone" }
     }
@@ -166,7 +158,7 @@ export async function getAgreementsByWallet(
   token?: string
 ): Promise<{ agreements: Agreement[]; error: string | null }> {
   try {
-    const result = await getAgreementsApi({ wallet_address: walletAddress }, token)
+    const result = await getAgreementsByWalletApi(walletAddress, token)
     if (!result.success) {
       return { agreements: [], error: result.error || "Failed to fetch agreements" }
     }
@@ -231,35 +223,6 @@ export async function getAgreementByContractId(
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to fetch agreement"
     return { agreement: null, error: message }
-  }
-}
-
-/**
- * Log activity on an agreement
- * IMPORTANT: This function signature is preserved for disputes.ts compatibility.
- * The token parameter is now required for backend API calls.
- * @param agreementId Agreement ID
- * @param actorWallet Wallet of the actor
- * @param action Action type
- * @param details Action details
- * @param token JWT token for authentication with backend API
- */
-export async function logAgreementActivity(
-  agreementId: string,
-  actorWallet: string,
-  action: string,
-  details: Record<string, unknown> = {},
-  token?: string
-): Promise<void> {
-  try {
-    if (!token) {
-      console.warn("Token required to log agreement activity but not provided")
-      return
-    }
-
-    await logAgreementActivityApi(agreementId, actorWallet, action, details, token)
-  } catch (e) {
-    console.error("Failed to log activity:", e)
   }
 }
 

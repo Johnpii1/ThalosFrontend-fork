@@ -1,7 +1,7 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
-import { updateAgreementStatus, logAgreementActivity } from "./agreements"
+import { updateAgreementStatus } from "./agreements"
 
 export type DisputeStatus = "open" | "under_review" | "resolved" | "cancelled"
 
@@ -93,17 +93,9 @@ export async function openDispute(
       return { dispute: null, error: error.message }
     }
 
-    // Update agreement status to disputed
+    // Update agreement status to disputed (backend will handle activity logging)
     if (token) {
       await updateAgreementStatus(input.agreement_id, "disputed", input.opened_by, token)
-    }
-
-    // Log activity
-    if (token) {
-      await logAgreementActivity(input.agreement_id, input.opened_by, "dispute_opened", {
-        dispute_id: dispute.id,
-        reason: input.reason,
-      }, token)
     }
 
     return { dispute: dispute as Dispute, error: null }
@@ -154,12 +146,7 @@ export async function assignDisputeResolver(
       return { success: false, error: error.message }
     }
 
-    if (token) {
-      await logAgreementActivity(dispute.agreement_id, resolverWallet, "dispute_resolver_assigned", {
-        dispute_id: disputeId,
-        resolver_wallet: resolverWallet,
-      }, token)
-    }
+    // Backend will handle activity logging when status is updated
 
     return { success: true, error: null }
   } catch (e) {
@@ -236,19 +223,9 @@ export async function resolveDispute(
       console.error("Error updating dispute:", updateError)
     }
 
-    // Update agreement status to resolved
+    // Update agreement status to resolved (backend will handle activity logging)
     if (token) {
       await updateAgreementStatus(dispute.agreement_id, "resolved", input.resolved_by, token)
-    }
-
-    // Log activity
-    if (token) {
-      await logAgreementActivity(dispute.agreement_id, input.resolved_by, "dispute_resolved", {
-        dispute_id: input.dispute_id,
-        payer_percentage: input.payer_percentage,
-        payee_percentage: input.payee_percentage,
-        resolution_notes: input.resolution_notes,
-      }, token)
     }
 
     return { resolution: resolution as DisputeResolution, error: null }
@@ -302,15 +279,9 @@ export async function cancelDispute(
       return { success: false, error: error.message }
     }
 
-    // Revert agreement status to active
+    // Revert agreement status to active (backend will handle activity logging)
     if (token) {
       await updateAgreementStatus(dispute.agreement_id, "active", cancelledBy, token)
-    }
-
-    if (token) {
-      await logAgreementActivity(dispute.agreement_id, cancelledBy, "dispute_cancelled", {
-        dispute_id: disputeId,
-      }, token)
     }
 
     return { success: true, error: null }
