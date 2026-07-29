@@ -36,7 +36,7 @@ import {
 import { createAgreement, sendTransaction, AgreementPayload, approveMilestone } from "@/services/trustlessworkService"
 import { STELLAR_EXPLORER_BASE_URL, SHOW_MOCKED_AGREEMENTS } from "@/lib/config"
 import { startKybSession } from "@/lib/api/kyb"
-import { KYB_ENTITY_TYPES, canStartKybSession, isKybVerified, nextKybStatusAfterSessionStart, type KybEntityType } from "@/lib/kyb"
+import { KYB_ENTITY_TYPES, buildCreateKybSessionDto, canStartKybSession, isKybVerified, nextKybStatusAfterSessionStart, type KybEntityType } from "@/lib/kyb"
 import {
   createTemplate,
   updateTemplate,
@@ -386,7 +386,7 @@ export default function BusinessDashboardPage() {
       })
       if (saved.error) throw new Error(saved.error)
 
-      const session = await startKybSession(currentWorkspaceWallet, kybFields, token)
+      const session = await startKybSession(buildCreateKybSessionDto(currentWorkspaceWallet, kybFields), token)
       const sessionId = session.session_id ?? session.id ?? null
       const nextStatus = nextKybStatusAfterSessionStart()
       const statusUpdate = await updateProfile(currentWorkspaceWallet, {
